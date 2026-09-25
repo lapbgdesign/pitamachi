@@ -531,9 +531,10 @@
     <div class="setup-row">
       <label><b>プレイ人数：</b></label>
       <select id="player-count-select" onchange="updatePlayerSetupUI()">
-        <option value="2">2人プレイ</option>
-        <option value="3">3人プレイ</option>
-        <option value="4">4人プレイ</option>
+        <option value="2cpu">2人プレイ（CPU）</option>
+        <option value="2human">2人プレイ（對戰）</option>
+        <option value="3cpu">3人プレイ（CPU）</option>
+        <option value="4cpu">4人プレイ（CPU）</option>
       </select>
       <button class="start-btn" onclick="startGameFromSetup()">🎮 ゲーム開始</button>
     </div>
@@ -572,6 +573,7 @@
 
   <script>
     let playerCount = 2;
+    let humanVersus = false;
     let players = [];
     let mainTurnIdx = 0;
     let currentTurnIdx = 0;
@@ -707,9 +709,12 @@
     }
 
     function updatePlayerSetupUI() {
-      playerCount = parseInt(document.getElementById('player-count-select').value);
+      const mode = document.getElementById('player-count-select').value;
+      playerCount = parseInt(mode, 10);
+      humanVersus = mode === '2human';
       const container = document.getElementById('ai-settings-container');
       container.innerHTML = '';
+      if(humanVersus) return;
       for(let i = 2; i <= playerCount; i++) {
         container.innerHTML += `
           <div>
@@ -725,9 +730,16 @@
     }
 
     function startGameFromSetup() {
-      players = [{ id: 1, name: 'あなた', isAI: false, score: 0, devZone: [] }];
+      const mode = document.getElementById('player-count-select').value;
+      playerCount = parseInt(mode, 10);
+      humanVersus = mode === '2human';
+      players = [{ id: 1, name: humanVersus ? 'プレイヤー1' : 'あなた', isAI: false, score: 0, devZone: [] }];
       aiMemories = {};
       for(let i = 2; i <= playerCount; i++) {
+        if(humanVersus) {
+          players.push({ id: i, name: `プレイヤー${i}`, isAI: false, score: 0, devZone: [] });
+          continue;
+        }
         const diffEl = document.getElementById(`ai-diff-${i}`);
         const diff = diffEl ? diffEl.value : 'mem80';
         const names = { perfectB:'神', mem80:'強', mem50:'普通', random:'弱そう' };
@@ -773,7 +785,7 @@
     }
 
     function setAction(act) {
-      if(isProcessing || isGameOver) return;
+      if(isProcessing || isGameOver || flippedCards.length) return;
       currentAction = act;
       document.getElementById('btnOne').classList.toggle('active', act === 'ONE');
       document.getElementById('btnTwo').classList.toggle('active', act === 'TWO');
@@ -854,7 +866,7 @@
     function handleCardClick(idx) {
       const curP = players[currentTurnIdx];
       const card = deck[idx];
-      if(isProcessing || isGameOver || curP.isAI || card.isFlipped || card.isMatched) return;
+      if(isProcessing || isGameOver || curP.isAI || card.isFlipped || card.isMatched || flippedCards.length >= (currentAction === 'TWO' ? 2 : 1)) return;
       card.isFlipped = true;
       broadcastCardFlip(card.id, card.value);
       flippedCards.push(card);
@@ -902,12 +914,10 @@
 
     function resolvePita(card) {
       const p = players[currentTurnIdx];
-      const idx = p.devZone.indexOf(card.value);
       p.score += 2;
-      p.devZone.splice(idx, 1);
       card.isMatched = true;
       broadcastCardMatched(card.id);
-      log(`🍜 PITA！${p.name} は同じカードを見つけて +2点。手元の同じカード1枚を取り除きます。${getCardInfoHtml(card.value)}`, 'success');
+      log(`🍜 PITA！${p.name} はめくったカードを得点エリアに置いて +2点。手元の2枚はそのまま残ります。${getCardInfoHtml(card.value)}`, 'success');
       finishTurn();
     }
 
@@ -982,7 +992,7 @@
       window.confirmKeepCard = i => {
         const kept = player.devZone[i];
         player.devZone = [kept];
-        log(`🧩 プレイヤーは 1枚を残しました。${getCardInfoHtml(kept)}`, 'system');
+        log(`🧩 ${player.name} は 1枚を残しました。${getCardInfoHtml(kept)}`, 'system');
         closeModal();
         callback();
       };
@@ -998,9 +1008,8 @@
     }
 
     function hasAnyLegalMove(remaining) {
-      if(remaining.length < playerCount) return false;
       const vals = remaining.map(c => c.value);
-      if(new Set(vals).size !== vals.length) return true;
+      if(vals.length >= 2 && new Set(vals).size !== vals.length) return true;
       for(const p of players) {
         for(const v of vals) {
           if(p.devZone.length === 2 && p.devZone.includes(v)) return true;
