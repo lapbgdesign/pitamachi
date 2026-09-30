@@ -1757,6 +1757,74 @@
 
     let currentLanguage = localStorage.getItem('pitamachi-language') || 'ja';
 
+    // ===== Usage analytics (GA4) =====
+    // GA4 Measurement ID（已設定）。
+    // 若維持預設值，所有統計函式都會靜默停用，不影響遊戲。
+    const PITAMACHI_GA_ID = 'G-098J96XLQC';
+    let pitamachiAnalyticsReady = false;
+    let pitamachiGameStartedAt = null;
+    let pitamachiBootstrapping = true;
+
+    function initPitamachiAnalytics() {
+      const id = String(PITAMACHI_GA_ID || '').trim();
+      if(!/^G-[A-Z0-9]+$/i.test(id) || id === 'G-XXXXXXXXXX') return;
+
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = window.gtag || function(){ window.dataLayer.push(arguments); };
+
+      const analyticsScript = document.createElement('script');
+      analyticsScript.async = true;
+      analyticsScript.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`;
+      document.head.appendChild(analyticsScript);
+
+      window.gtag('js', new Date());
+      window.gtag('config', id, {
+        allow_google_signals: false,
+        allow_ad_personalization_signals: false
+      });
+      pitamachiAnalyticsReady = true;
+    }
+
+    function trackPitamachiEvent(eventName, params = {}) {
+      if(!pitamachiAnalyticsReady || typeof window.gtag !== 'function') return;
+      window.gtag('event', eventName, {
+        app_version: 'v76',
+        language: currentLanguage,
+        ...params
+      });
+    }
+
+    function getPitamachiPlayMode() {
+      if(players.length >= 2) return players[1].isAI ? 'cpu' : 'pvp';
+      const modeEl = document.getElementById('player-count-select');
+      return modeEl && modeEl.value === '2pvp' ? 'pvp' : 'cpu';
+    }
+
+    function beginPitamachiAnalyticsGame(source = 'start_button') {
+      pitamachiGameStartedAt = Date.now();
+      const diffEl = document.getElementById('ai-diff-2');
+      trackPitamachiEvent('pitamachi_game_start', {
+        play_mode: getPitamachiPlayMode(),
+        start_source: source,
+        ai_difficulty: getPitamachiPlayMode() === 'cpu' && diffEl ? diffEl.value : 'none'
+      });
+    }
+
+    function restartPitamachiGame() {
+      closeModal();
+      beginPitamachiAnalyticsGame('replay');
+      initGame();
+    }
+
+    initPitamachiAnalytics();
+
+    window.addEventListener('load', () => {
+      const mobile = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+      trackPitamachiEvent('pitamachi_trial_open', {
+        device_group: mobile ? 'mobile_or_small' : 'desktop_or_tablet'
+      });
+    }, { once:true });
+
     const I18N = {
       ja: {
         title:'🍜 ピタまち｜Web試遊版', subtitle:'1枚めくりは PITA／MACHI を自動判定、2枚めくりは PAIR です。',
@@ -2023,6 +2091,7 @@
       localStorage.setItem('pitamachi-language', lang);
       document.documentElement.lang = lang === 'zh-TW' ? 'zh-TW' : lang;
       applyLanguage();
+      trackPitamachiEvent('pitamachi_language_select', { selected_language: lang });
     }
 
     function applyLanguage() {
@@ -2272,6 +2341,7 @@
 
       mainTurnIdx = 0;
       currentTurnIdx = 0;
+      if(!pitamachiBootstrapping) beginPitamachiAnalyticsGame('start_button');
       initGame();
     }
 
@@ -2803,6 +2873,15 @@
       isGameOver = true;
       const top = Math.max(...players.map(p => p.score));
       const winners = players.filter(p => p.score === top);
+      const durationSeconds = pitamachiGameStartedAt ? Math.max(0, Math.round((Date.now() - pitamachiGameStartedAt) / 1000)) : 0;
+      trackPitamachiEvent('pitamachi_game_complete', {
+        play_mode: getPitamachiPlayMode(),
+        duration_seconds: durationSeconds,
+        top_score: top,
+        is_tie: winners.length > 1,
+        remaining_cards: deck.filter(c => !c.isMatched).length
+      });
+      pitamachiGameStartedAt = null;
       const rows = [...players].sort((a,b)=>b.score-a.score)
         .map(p => `<div class="stat-row"><span>${p.name}:</span><b>${t('points', { n:p.score })}</b></div>`).join('');
       const winnerText = winners.length === 1
@@ -2814,7 +2893,7 @@
         <p style="color:#4B3A32;font-weight:500;">${reason}</p>
         <h3>${winnerText}</h3>
         <div style="text-align:left;margin:15px 0;">${rows}</div>
-        <button onclick="closeModal(); initGame();" style="background:#38bdf8;color:black;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;">${t('playAgain')}</button>
+        <button onclick="restartPitamachiGame();" style="background:#38bdf8;color:black;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;">${t('playAgain')}</button>
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid #C9B79F;color:#4B3A32;line-height:1.65;text-align:center;font-weight:600;">
           <div>10/17-10/18 エリア58 頒布します</div>
           <div>予約フォームと説明書</div>
@@ -2853,6 +2932,7 @@
     if(initialLanguageSelect) initialLanguageSelect.value = currentLanguage;
     applyLanguage();
     startGameFromSetup();
+    pitamachiBootstrapping = false;
 
     // 每次進入頁面都先選語系，再依選擇顯示對應規則。
     setTimeout(openFirstLanguageModal, 80);
